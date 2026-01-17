@@ -1,4 +1,1 @@
-data,descricao,categoria,valor,prioridade
-2026-01-10,Aluguel,Moradia,1500.00,Essencial
-2026-01-12,Restaurante,Lazer,250.00,Supérfluo
-2026-01-14,Mercado,Alimentacao,600.00,Essencial
+data,descricao,valor,categoria,prioridade
