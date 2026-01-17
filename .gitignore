@@ -4,8 +4,7 @@ __pycache__/
 *.pyc
 .env
 
-data/*.csv
-data/*.json
+data/
 
 .chainlit/
 .files/
