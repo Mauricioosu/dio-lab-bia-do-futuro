@@ -10,33 +10,32 @@ class FinAssistOrchestrator:
         self.data = data
         self.provider = self._get_provider()
         self.retriever = FinancialRetriever(data=self.data)
-        # PROMPT BASE
+        # PROMPT
         self.system_prompt_base = """
-                Você é o FinAssist Pro, um mentor financeiro inteligente.
+        Você é o FinAssist Pro, um mentor financeiro inteligente. Seu papel é ajudar os usuários a gerenciar suas finanças pessoais com base nos dados fornecidos.
+        # DIRETRIZES DE COMPORTAMENTO:
+        1. BASE DE VERDADE: Use exclusivamente os dados fornecidos no contexto (Transações, Produtos, Metas e Perfil) para responder.
+        2. PRECISÃO MATEMÁTICA: Ao realizar cálculos, descreva a fórmula utilizada. Se o cálculo for complexo, sugira que é uma simulação educacional.
+        3. TOM DE VOZ: Seja consultivo, encorajador e profissional. Evite termos técnicos sem explicá-los brevemente.
+        4. SEGURANÇA: Nunca solicite ou aceite senhas e dados sensíveis. Reforce que você não substitui um consultor humano certificado.
 
-                DIRETRIZES GERAIS:
-                1. BASE DE VERDADE: Use SOMENTE os dados do contexto (Perfil, Metas, Transações).
-                2. SEGURANÇA: Não peça senhas.
-                3. DADOS: NUNCA invente dados financeiros para completar o contexto se necessário pergunte os dados que precise.
-                4. NÃO realiza transações bancárias ou movimentações de dinheiro.
-                5. NÃO solicita senhas, tokens ou dados sensíveis (LGPD Compliance).
-                6. As cotações de mercado no modo offline dependem da última atualização da base de conhecimento fornecida.
-                7. NÃO fornece recomendações personalizadas de compra/venda de ações específicas.
-                8. Não substitui um consultor financeiro certificado (CFA/CNPI)
-                ### REGRA MESTRA DE REGISTROS (LEITURA VS ESCRITA) ###
-                CASO 1: LEITURA (O usuário pergunta saldo, extrato ou metas)
-                - Apenas responda a pergunta com base no contexto.
-                - PROIBIDO usar a tag #SAVE# neste caso.
-                CASO 2: ESCRITA (O usuário pede para CRIAR, ADICIONAR ou REGISTRAR algo novo)
-                - Identifique se é TRANSAÇÃO ou META.
-                - OBRIGATORIAMENTE use o formato JSON no final:
-                A) Se for Gasto/Ganho:
-                #SAVE#{"tipo": "transacao", "descricao": "Item", "valor": -100.00, "categoria": "Lazer"}#SAVE#
-                (Lembre-se: Gastos são negativos, Ganhos positivos)
-                B) Se for Nova Meta:
-                #SAVE#{"tipo": "meta", "descricao": "Nome da Meta", "valor": 5000.00, "data_limite": "Dez/2026"}#SAVE#
-                IMPORTANTE: Nunca use #SAVE# se o valor for desconhecido ou null.
-                """
+        # DIRETRIZES DE COMANDOS DE BANCO DE DADOS:
+        1. PARA CRIAR (SAVE):
+           - Gasto/Ganho: #SAVE_TRANSACAO#{"descricao": "Item", "valor": -50.00, "categoria": "Lazer"}#SAVE_TRANSACAO#
+           - Meta: #SAVE_META#{"descricao": "Viajar", "valor": 5000.00}#SAVE_META#
+        2. PARA EDITAR/ALTERAR (UPDATE):
+           - Use o ID visível no contexto. Só envie os campos que mudaram.
+           - Transação: #UPDATE_TRANSACAO#{"id": 5, "valor": -60.00}#UPDATE_TRANSACAO#
+           - Meta: #UPDATE_META#{"id": 0, "valor_alvo": 6000.00}#UPDATE_META#
+        3. PARA EXCLUIR (DELETE):
+           - Transação: #DELETE_TRANSACAO#{"id": 12}#DELETE_TRANSACAO#
+           - Meta: #DELETE_META#{"id": 0}#DELETE_META#
+        REGRA: Para editar, NUNCA use #SAVE_...# (isso cria duplicata). Use #UPDATE_...#.
+        # REGRAS DE RESPOSTA:
+        - Se o usuário pedir um conselho sobre um gasto específico, analise o impacto dele na Meta Financeira.
+        - Se o usuário perguntar sobre investimentos, verifique primeiro o 'Perfil de Investidor' no contexto.
+        - Se a informação não estiver na base de conhecimento, diga: "Não tenho esses dados específicos no momento, mas com base nos conceitos financeiros gerais, posso te explicar que..."
+        """
 
     def _get_provider(self):
         if self.mode == "local":
@@ -51,35 +50,90 @@ class FinAssistOrchestrator:
         context = self.retriever.get_relevant_context(user_query)
         full_system_prompt = f"{self.system_prompt_base}\n\n### CONTEXTO ###\n{context}"
         response = await self.provider.generate_response(full_system_prompt, user_query)
-        # LÓGICA DE ROTEAMENTO
-        if "#SAVE#" in response:
-            try:
-                clean_response = response.split("#SAVE#")[0].strip()
-                json_str = response.split("#SAVE#")[1]
-                data_to_save = json.loads(json_str)
-                tipo_acao = data_to_save.get("tipo")
-                sucesso = False
-                if tipo_acao == "transacao":
-                    sucesso = self.retriever.add_transaction(
-                        descricao=data_to_save["descricao"],
-                        valor=data_to_save["valor"],
-                        categoria=data_to_save.get("categoria", "Geral")
-                    )
-                    msg_confirmacao = "\n\n✅ *Transação registrada e saldo atualizado!*"
-                elif tipo_acao == "meta":
-                    sucesso = self.retriever.add_goal(
-                        descricao=data_to_save["descricao"],
-                        valor_alvo=data_to_save["valor"],
-                        data_limite=data_to_save.get("data_limite")
-                    )
-                    msg_confirmacao = "\n\n🎯 *Nova meta definida com sucesso!*"
+        # ROUTER EXTENDIDO
+        # CRIAR
+        if "#SAVE_TRANSACAO#" in response:
+            return self._handle_action(response, "#SAVE_TRANSACAO#", self._save_transaction_action)
+        elif "#SAVE_META#" in response:
+            return self._handle_action(response, "#SAVE_META#", self._save_goal_action)
+        # EDITAR (NOVO)
+        elif "#UPDATE_TRANSACAO#" in response:
+            return self._handle_action(response, "#UPDATE_TRANSACAO#", self._update_transaction_action)
+        elif "#UPDATE_META#" in response:
+            return self._handle_action(response, "#UPDATE_META#", self._update_goal_action)
 
-                if sucesso:
-                    return f"{clean_response}{msg_confirmacao}"
-                else:
-                    return f"{clean_response}\n\n❌ *Erro ao salvar no disco.*"
+        # DELETAR
+        elif "#DELETE_TRANSACAO#" in response:
+            return self._handle_action(response, "#DELETE_TRANSACAO#", self._delete_transaction_action)
+        elif "#DELETE_META#" in response:
+            return self._handle_action(response, "#DELETE_META#", self._delete_goal_action)
+        # LEGACY
+        elif "#SAVE#" in response:
+            return self._handle_action(response, "#SAVE#", self._save_transaction_action)
 
-            except Exception as e:
-                print(f"Erro no Router de salvamento: {e}")
         return response
-# Fim da classe FinAssistOrchestrator
+
+    def _handle_action(self, response, tag, action_func):
+        """
+        Smart Parser: Procura por um bloco JSON válido entre as tags, ignorando
+        menções da tag no texto comum.
+        """
+        try:
+            parts = response.split(tag)
+            if len(parts) < 3:
+                return response
+
+            for i in range(1, len(parts)):
+                candidate = parts[i].strip()
+                if len(candidate) < 2:
+                    continue
+                try:
+                    data_dict = json.loads(candidate)
+                    msg_sistema = action_func(data_dict)
+                    pre_text = tag.join(parts[:i]).strip()
+                    post_text = tag.join(parts[i+1:]).strip()
+                    final_response = f"{pre_text}\n\n_{msg_sistema}_\n\n{post_text}"
+                    return final_response.strip()
+                except json.JSONDecodeError:
+                    continue
+
+            return response
+
+        except Exception as e:
+            print(f"Erro Crítico no Router: {e}")
+            return f"{response}\n\n❌ *Erro interno ao processar comando.*"
+
+    # ACTION HANDLERS
+
+    def _save_transaction_action(self, data):
+        if self.retriever.add_transaction(data["descricao"], data["valor"], data.get("categoria", "Geral")):
+            return "✅ Transação registrada."
+        return "❌ Erro ao gravar."
+
+    def _save_goal_action(self, data):
+        if self.retriever.add_goal(data["descricao"], data.get("valor", data.get("valor_alvo")), data.get("data_limite")):
+            return "🎯 Meta criada."
+        return "❌ Erro ao gravar."
+
+    def _update_transaction_action(self, data):
+        # Remove ID do dict de dados para passar como kwargs limpos
+        idx = data.pop("id", None)
+        if idx is not None and self.retriever.update_transaction(idx, **data):
+            return f"📝 Transação ID {idx} atualizada."
+        return "❌ Erro ao atualizar (ID inválido?)."
+
+    def _update_goal_action(self, data):
+        idx = data.pop("id", None)
+        if idx is not None and self.retriever.update_goal(idx, **data):
+            return f"📝 Meta ID {idx} atualizada."
+        return "❌ Erro ao atualizar meta."
+
+    def _delete_transaction_action(self, data):
+        if self.retriever.delete_transaction(data.get("id")):
+            return f"🗑️ Transação ID {data.get('id')} removida."
+        return "❌ Erro ao remover."
+
+    def _delete_goal_action(self, data):
+        if self.retriever.delete_goal(data.get("id")):
+            return f"🗑️ Meta ID {data.get('id')} removida."
+        return "❌ Erro ao remover."
