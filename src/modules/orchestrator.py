@@ -1,22 +1,21 @@
 import os
-import chainlit as cl
-from abc import ABC, abstractmethod
-import pandas as pd
 import json
 from modules.retriever import FinancialRetriever
 from modules.providers import OllamaProvider, OpenAIProvider, GeminiProvider
 
 class FinAssistOrchestrator:
-    def __init__(self, mode="local", data=None,api_key=None): 
+    def __init__(self, mode="local", data=None, api_key=None): 
         self.mode = mode
         self.api_key = api_key
-        self.data = data # Armazena a "Base de Verdade"
+        self.data = data 
+        # Importante: Definir api_key antes de instanciar o provider
         self.provider = self._get_provider()
         
+        # O Retriever agora recebe os dados da sessão ou carrega do disco
         self.retriever = FinancialRetriever(data=self.data)
         
         self.system_prompt_base = """
-        Você é o FinAssist Pro, um mentor financeiro inteligente, ético e educativo. 
+        Você é o FinAssist Pro, um mentor financeiro inteligente, ético e educativo. você Deve registrar gastos, sugerir investimentos e ajudar no planejamento financeiro. 
         Seu objetivo é ajudar os usuários a organizarem suas finanças e entenderem o mercado financeiro de forma didática.
 
         DIRETRIZES DE COMPORTAMENTO:
@@ -24,33 +23,50 @@ class FinAssistOrchestrator:
         2. PRECISÃO MATEMÁTICA: Ao realizar cálculos, descreva a fórmula utilizada.
         3. TOM DE VOZ: Seja consultivo, encorajador e profissional.
         4. SEGURANÇA: Nunca solicite ou aceite senhas e dados sensíveis.
+
+        REGRA DE REGISTRO:
+        Se o usuário solicitar o registro de um gasto ou ganho, você deve enviar um valor POSITIVO para Ganho e NEGATIVO para gasto. e por final confirmar a ação no texto e, OBRIGATORIAMENTE, incluir ao final da resposta o seguinte formato:
+        #SAVE#{"descricao": "nome do item", "valor": 100.00, "categoria": "Lazer"}#SAVE#
+        
+        Exemplo: "Com certeza! Registrei sua compra de 150 reais no mercado. #SAVE#{"descricao": "Mercado", "valor": 150.00, "categoria": "Alimentação"}#SAVE#"
+        Mantenha sempre esse formato para que o sistema possa identificar e salvar a transação corretamente.
         """
 
     def _get_provider(self):
-        """Seleciona o provedor de LLM baseado no modo (Local vs Cloud)."""
+        """Seleciona o provedor usando a chave dinâmica da interface."""
         if self.mode == "local":
             return OllamaProvider()
         elif self.mode == "gemini":
-            return GeminiProvider(api_key=os.getenv("GEMINI_API_KEY"))
-        return OpenAIProvider(api_key=os.getenv("OPENAI_API_KEY"))
+            return GeminiProvider(api_key=self.api_key)
+        elif self.mode == "openai":
+            return OpenAIProvider(api_key=self.api_key)
+        return OllamaProvider() # Fallback seguro
 
     async def run(self, user_query: str):
-        """Executa o fluxo principal: RAG + LLM."""
-        context = self.retriever.get_relevant_context(user_query)
-        
-        full_system_prompt = f"{self.system_prompt_base}\n\n### CONTEXTO DE VERDADE ###\n{context}"
-        
-        return await self.provider.generate_response(full_system_prompt, user_query)
-    
-class LLMFactory:
-    @staticmethod
-    def get_model(mode="online"):
-        if mode == "offline":
-            # Configuração para Ollama + llama3
-            return "ollama/llama3"
-        else:
-            # Configuração para GPT-4o ou Gemini 1.5 Pro
-            return "openai/gpt-4o"
-
-# Uso no fluxo do Orquestrador
-model_choice = LLMFactory.get_model(mode="online")
+            context = self.retriever.get_relevant_context(user_query)
+            full_system_prompt = f"{self.system_prompt_base}\n\n### CONTEXTO ###\n{context}"
+            
+            response = await self.provider.generate_response(full_system_prompt, user_query)
+            
+            # Lógica de interceptação de salvamento
+            if "#SAVE#" in response:
+                try:
+                    # Extrai o conteúdo entre as tags #SAVE#
+                    json_str = response.split("#SAVE#")[1]
+                    data_to_save = json.loads(json_str)
+                    
+                    # Executa a gravação física
+                    sucesso = self.retriever.add_transaction(
+                        descricao=data_to_save["descricao"],
+                        valor=data_to_save["valor"],
+                        categoria=data_to_save.get("categoria", "Outros")
+                    )
+                    
+                    if sucesso:
+                        # Remove a tag técnica da resposta para o usuário não ver o JSON
+                        clean_response = response.split("#SAVE#")[0]
+                        return f"{clean_response}\n\n✅ *Transação registrada no sistema!*"
+                except Exception as e:
+                    print(f"Erro no processamento do salvamento: {e}")
+            
+            return response
