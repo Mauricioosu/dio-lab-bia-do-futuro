@@ -47,6 +47,18 @@ class FinancialRetriever:
             data["objetivos_financeiros"] = []
 
         return data
+        # Carregar Produtos Financeiros
+        path_prod = os.path.join(self.data_path, "produtos_financeiros.json")
+        if os.path.exists(path_prod):
+            try:
+                with open(path_prod, 'r', encoding='utf-8') as f:
+                    data["produtos_financeiros"] = json.load(f)
+            except Exception:
+                data["produtos_financeiros"] = []
+        else:
+            data["produtos_financeiros"] = []
+
+        return data
 
     def _save_csv(self, df):
         path = os.path.join(self.data_path, "transacoes.csv")
@@ -100,6 +112,24 @@ class FinancialRetriever:
                 txt_transacoes += ultimas[['index', 'data', 'descricao', 'valor', 'categoria']].to_string(index=False)
                 context.append(txt_transacoes)
 
+        # INJEÇÃO DE PRODUTOS FINANCEIROS
+        keywords_invest = [
+            "investir", "rendimento", "aplicar", "onde colocar",
+            "recomendação", "cdb", "tesouro", "lci", "lca", "poupança",
+            "fundo", "risco", "melhor opção"
+        ]
+        if any(k in query.lower() for k in keywords_invest):
+            produtos = self.data.get("produtos_financeiros", [])
+            if produtos:
+                txt_prod = "PRODUTOS FINANCEIROS DISPONÍVEIS (Use para recomendação):\n"
+                for p in produtos:
+                    nome = p.get('nome', 'Produto')
+                    tipo = p.get('tipo', 'Renda Fixa')
+                    rentab = p.get('rentabilidade', 'N/A')
+                    risco = p.get('risco', 'N/A')
+                    liquidez = p.get('liquidez', 'N/A')
+                    txt_prod += f"- {nome} ({tipo}): Rentabilidade {rentab} | Risco {risco} | Liq. {liquidez}\n"
+                context.append(txt_prod)
         return "\n\n".join(context) if context else "Nenhum contexto financeiro disponível."
 
     # CRUD OPERATIOS
@@ -135,7 +165,7 @@ class FinancialRetriever:
             if idx not in df.index:
                 return False
 
-            # Lógica de Saldo: Retira o antigo, põe o novo
+            # Retira o antigo, põe o novo
             valor_antigo = df.loc[idx, 'valor']
             novo_valor = kwargs.get('valor', valor_antigo)
             # Atualiza colunas solicitadas
@@ -146,8 +176,6 @@ class FinancialRetriever:
 
             # Ajuste de Saldo
             if novo_valor != valor_antigo:
-                # Exemplo: Era -50 (Gasto), Virou -60 (Gasto maior)
-                # Delta = -60 - (-50) = -10. Saldo diminui 10.
                 delta = float(novo_valor) - float(valor_antigo)
                 self._update_balance_file(delta)
             return True
