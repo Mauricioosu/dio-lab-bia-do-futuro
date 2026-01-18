@@ -80,11 +80,10 @@ async def run_onboarding():
         json.dump([], f, ensure_ascii=False, indent=4)
     await cl.Message(content=f"✅ Tudo pronto, **{nome_usuario}**!").send()
 
-# FLUXO PRINCIPA
+# FLUXO PRINCIPAL
 
 @cl.on_chat_start
 async def start():
-    # Garante infraestrutura
     await ensure_data_directory()
     
     # Renderiza Widgets (Engrenagem)
@@ -94,7 +93,6 @@ async def start():
         TextInput(id="OpenAIKey", label="OpenAI API Key", placeholder="Insira aqui...")
     ]).send()
 
-    # Verifica se precisa de Onboarding
     perfil_path = os.path.join(DATA_PATH, "perfil_investidor.json")
     if not os.path.exists(perfil_path):
         await run_onboarding()
@@ -103,7 +101,6 @@ async def start():
     data = await load_all_financial_data()
     cl.user_session.set("financial_data", data)
     
-    # Passamos os dados para o Orquestrador
     orchestrator = FinAssistOrchestrator(mode=settings["ModelMode"])
     cl.user_session.set("orchestrator", orchestrator)
     

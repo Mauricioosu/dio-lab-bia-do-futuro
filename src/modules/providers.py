@@ -19,7 +19,6 @@ class OllamaProvider(LLMProvider):
         }
 
     async def generate_response(self, system_prompt, user_query):
-        # Implementação de Privacidade Total e Segurança de Dados
         payload = {
             "model": self.model,
             "prompt": f"{system_prompt}\n\nUsuário: {user_query}",

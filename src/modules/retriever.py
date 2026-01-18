@@ -45,7 +45,6 @@ class FinancialRetriever:
                 path_metas = os.path.join(self.data_path, "objetivos_financeiros.json")
                 if os.path.exists(path_metas):
                     with open(path_metas, 'r', encoding='utf-8') as f:
-                        # Atualiza a memória interna antes de ler
                         self.data["objetivos_financeiros"] = json.load(f)
             except Exception as e:
                 print(f"Aviso: Não foi possível recarregar metas: {e}")
@@ -92,14 +91,12 @@ class FinancialRetriever:
             }
             
             try:
-                # 1. Carrega ou cria o DataFrame com colunas explícitas
+                # Carrega ou cria o DataFrame com colunas explícitas
                 if os.path.exists(transacoes_path) and os.path.getsize(transacoes_path) > 0:
                     df = pd.read_csv(transacoes_path)
                 else:
-                    # Se o arquivo não existe ou está vazio, cria com a estrutura correta
                     df = pd.DataFrame(columns=['data', 'descricao', 'valor', 'categoria', 'prioridade'])
 
-                # 2. Concatenação segura
                 df = pd.concat([df, pd.DataFrame([nova_linha])], ignore_index=True)
                 df.to_csv(transacoes_path, index=False)
                 
